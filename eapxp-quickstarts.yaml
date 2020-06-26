@@ -1,0 +1,111 @@
+apiVersion: 1.0.0
+metadata:
+ generateName: java-eap-xp-maven-
+projects:
+  - name: microprofile-quickstarts
+    source:
+      location: 'https://github.com/jboss-developer/jboss-eap-quickstarts.git'
+      type: git
+      tag: XP_1.0.0.GA
+components: 
+- 
+  alias: jaeger
+  type: dockerimage
+  image: jaegertracing/all-in-one
+  memoryLimit: 128Mi
+  endpoints:
+      - name: 'tracing-ui'
+        port: 16686
+-
+  type: chePlugin
+  id: redhat/java11/latest
+-
+  type: dockerimage
+  alias: maven
+  image: 'registry.redhat.io/jboss-eap-7/eap-xp1-openjdk11-openshift-rhel8@sha256:bebc469f8b21d8132f7b0df62b90107e68e7a77c36d39270f349216557102787'
+  env:
+# Enabling Jaeger tracing
+   - name: WILDFLY_TRACING_ENABLED
+     value: 'true'
+# Define the Jaeger service name 
+   - name: JAEGER_SERVICE_NAME
+     value: 'microprofile-opentracing'
+# Configure Jaeger traces
+   - name: JAEGER_REPORTER_LOG_SPANS 
+     value: 'true'
+   - name: JAEGER_SAMPLER_TYPE
+     value: 'const'
+   - name: JAEGER_SAMPLER_PARAM
+     value: '1'
+   -
+    name: MAVEN_OPTS
+    value: >-
+     -Xmx200m -XX:MaxRAMPercentage=50.0 -XX:+UseParallelGC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=20 -XX:GCTimeRatio=4
+     -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xms20m -Djava.security.egd=file:/dev/./urandom -Duser.home=/home/jboss
+  memoryLimit: 1024Mi
+  endpoints:
+   -
+    name: eap-http
+    port: 8080
+   -
+    name: eap-management
+    port: 9990
+  mountSources: true
+  volumes:
+   -
+    name: m2
+    containerPath: /home/jboss/.m2
+commands:
+  - name: build
+    actions:
+      - workdir: '${fileDirname}'
+        type: exec
+        command: mvn clean install
+        component: maven
+  - name: build and run in debug
+    actions:
+      - workdir: '${fileDirname}'
+        type: exec
+        command: >-
+          mvn clean install &&  cp target/*.war /opt/eap/standalone/deployments/ROOT.war &&  export
+          JAVA_OPTS_APPEND="-Xrunjdwp:transport=dt_socket,address=8000,server=y,suspend=n
+          -Dsun.util.logging.disableCallerCheck=true" && /opt/eap/bin/openshift-launch.sh
+        component: maven
+  - name: copy war
+    actions:
+      - workdir: '${fileDirname}'
+        type: exec
+        command: cp target/*.war /opt/eap/standalone/deployments/ROOT.war
+        component: maven
+  - name: hot update
+    actions:
+      - workdir: '${fileDirname}'
+        type: exec
+        command: >-
+          mvn clean install && cp target/*.war
+          /opt/eap/standalone/deployments/ROOT.war
+        component: maven
+  - name: dependency analysis
+    actions:
+      - type: exec
+        command: >-
+          ${HOME}/stack-analysis.sh -f
+          ${current.project.path}/pom.xml -p
+          ${current.project.path}
+        component: maven
+  - name: Debug (Attach)
+    actions:
+      - referenceContent: |
+          {
+          "version": "0.2.0",
+          "configurations": [
+          {
+              "type": "java",
+              "request": "attach",
+              "name": "Debug (Attach)",
+              "hostName": "localhost",
+              "port": 8000
+          }
+          ]
+          }
+        type: vscode-launch
